@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>用户画像管理</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e2230;
+    --border: #2a2f3e; --text: #e6e9f0; --muted: #8b92a5;
+    --accent: #6c8cff; --accent2: #9d6cff; --danger: #ff5c6c;
+    --ok: #3ddc97; --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 80px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  h1 .dot { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .card .num { font-size: 26px; font-weight: 700; margin-top: 6px; }
+  .card .lbl { color: var(--muted); font-size: 13px; }
+  .card.accent .num { color: var(--accent); }
+  .card.green .num { color: var(--ok); }
+  .card.purple .num { color: var(--accent2); }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  input, select, button {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 9px 12px; font-size: 14px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input[type=search] { flex: 1; min-width: 200px; }
+  button { cursor: pointer; transition: .15s; }
+  button:hover { filter: brightness(1.15); }
+  button.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; font-weight: 600; }
+  button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+  .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  thead th { text-align: left; padding: 12px 14px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(108,140,255,.05); }
+  .nick { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #fff;
+  }
+  .tag { display: inline-block; background: rgba(108,140,255,.15); color: var(--accent); border-radius: 6px; padding: 2px 8px; font-size: 12px; margin: 2px 4px 2px 0; }
+  .muted { color: var(--muted); }
+  .time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .ops { display: flex; gap: 6px; }
+  .ops button { padding: 5px 10px; font-size: 12px; }
+  .empty { text-align: center; padding: 48px 0; color: var(--muted); }
+  /* 抽屉 */
+  .drawer-mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; transition: .2s; z-index: 50; }
+  .drawer-mask.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: min(480px, 92vw);
+    background: var(--panel); border-left: 1px solid var(--border); z-index: 60;
+    transform: translateX(100%); transition: .25s ease; overflow-y: auto;
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer .head { position: sticky; top: 0; background: var(--panel); padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; z-index: 5; }
+  .drawer .body { padding: 20px; }
+  .kv { margin-bottom: 16px; }
+  .kv .k { color: var(--muted); font-size: 12px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px; }
+  .kv .v { font-size: 14px; word-break: break-all; }
+  .field-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .field-row input { flex: 1; }
+  .note-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .note-item .t { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .section-title { font-size: 15px; font-weight: 600; margin: 22px 0 10px; display: flex; align-items: center; gap: 8px; }
+  .section-title::before { content: ""; width: 4px; height: 16px; background: var(--accent); border-radius: 2px; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--panel2); border: 1px solid var(--border); padding: 10px 18px;
+    border-radius: 10px; font-size: 14px; opacity: 0; transition: .25s; z-index: 99;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--danger); }
+  .badge-platform { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+  .footer { margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SoulBook<span class="dot">.</span>灵魂书卷</h1>
+      <div class="sub" id="addr"></div>
+    </div>
+    <button class="primary" onclick="openCreate()">＋ 手动添加</button>
+  </header>
+
+  <div class="cards">
+    <div class="card accent"><div class="lbl">已记录用户</div><div class="num" id="cUsers">-</div></div>
+    <div class="card green"><div class="lbl">累计消息</div><div class="num" id="cMsgs">-</div></div>
+    <div class="card purple"><div class="lbl">覆盖群聊</div><div class="num" id="cGroups">-</div></div>
+  </div>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="搜索昵称 / ID / 字段…">
+    <select id="sort">
+      <option value="active">最近活跃</option>
+      <option value="msgs">消息最多</option>
+      <option value="nick">按昵称</option>
+    </select>
+    <button onclick="load()">刷新</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>用户</th><th>ID</th><th>群</th><th>字段</th><th>消息</th><th>最近活跃</th><th>操作</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none;">暂无数据</div>
+  </div>
+  <div class="footer">SoulBook 灵魂书卷 · 数据保存在插件 data 目录</div>
+</div>
+
+<div class="drawer-mask" id="mask" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="head">
+    <div style="font-weight:600;" id="dTitle">详情</div>
+    <button style="background:transparent;border:none;color:var(--muted);font-size:20px;cursor:pointer;" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="body" id="dBody"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let allUsers = [];
+let currentKey = null;
+
+function toast(msg, type) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => t.className = 'toast', 2200);
+}
+
+function fmt(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function avatar(u) {
+  const n = (u.nickname || u.user_id || '?').trim();
+  return '<div class="avatar">' + esc(n.charAt(0).toUpperCase()) + '</div>';
+}
+
+function platformBadge(u) {
+  return '<span class="badge-platform">' + esc(u.platform || '?') + '</span>';
+}
+
+function render(users) {
+  const tb = $('#tbody');
+  const q = $('#search').value.trim().toLowerCase();
+  const sort = $('#sort').value;
+  let list = users.slice();
+  if (q) {
+    list = list.filter(u => {
+      const hay = [u.nickname, u.user_id, u.key, Object.entries(u.fields||{}).map(([k,v])=>k+' '+v).join(' '), (u.notes||[]).map(n=>n.text).join(' ')].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  if (sort === 'msgs') list.sort((a,b) => (b.message_count||0) - (a.message_count||0));
+  else if (sort === 'nick') list.sort((a,b) => String(a.nickname||'').localeCompare(String(b.nickname||''), 'zh'));
+  else list.sort((a,b) => (b.last_active||0) - (a.last_active||0));
+
+  if (!list.length) { tb.innerHTML = ''; $('#empty').style.display = 'block'; return; }
+  $('#empty').style.display = 'none';
+  tb.innerHTML = list.map(u => {
+    const groups = Object.values(u.groups || {});
+    const groupNames = groups.slice(0, 2).map(g => g.name || '?').join('、') + (groups.length > 2 ? ` 等${groups.length}个` : '');
+    const fields = Object.entries(u.fields || {}).slice(0, 3).map(([k,v]) => `<span class="tag">${esc(k)}:${esc(v)}</span>`).join('');
+    return `<tr>
+      <td><div class="nick">${avatar(u)}<span>${esc(u.nickname || '(未命名)')}</span>${platformBadge(u)}</div></td>
+      <td class="muted">${esc(u.user_id)}</td>
+      <td class="muted">${esc(groupNames || '-')}</td>
+      <td>${fields || '<span class="muted">-</span>'}</td>
+      <td>${u.message_count || 0}</td>
+      <td class="time">${fmt(u.last_active)}</td>
+      <td><div class="ops">
+        <button onclick="openDetail('${esc(u.key)}')">详情</button>
+        <button class="danger" onclick="delUser('${esc(u.key)}')">删</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+async function load() {
+  try {
+    const [stats, users] = await Promise.all([
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/users').then(r => r.json()),
+    ]);
+    $('#cUsers').textContent = stats.users; $('#cMsgs').textContent = stats.messages; $('#cGroups').textContent = stats.groups;
+    allUsers = users;
+    render(users);
+  } catch (e) {
+    toast('加载失败：' + e.message, 'err');
+  }
+}
+
+async function openDetail(key) {
+  currentKey = key;
+  try {
+    const u = await fetch('/api/user/' + encodeURIComponent(key)).then(r => r.json());
+    if (u.error) { toast(u.error, 'err'); return; }
+    $('#dTitle').textContent = (u.nickname || u.user_id) + ' 的画像';
+    const fieldsHtml = Object.entries(u.fields || {}).map(([k,v]) =>
+      `<div class="field-row"><input class="fk" value="${esc(k)}" placeholder="字段名"><input class="fv" value="${esc(v)}" placeholder="值"><button onclick="removeFieldRow(this)">✕</button></div>`
+    ).join('') || '<div class="field-row"><input class="fk" placeholder="字段名"><input class="fv" placeholder="值"><button onclick="removeFieldRow(this)">✕</button></div>';
+    const notesHtml = (u.notes || []).map((n, i) =>
+      `<div class="note-item">${esc(n.text)}<div class="t">${fmt(n.time)} · ${esc(n.author || '')} <span style="cursor:pointer;color:var(--danger);" onclick="delNote('${esc(key)}', ${i})">删除</span></div></div>`
+    ).join('') || '<div class="muted">暂无备注</div>';
+    $('#dBody').innerHTML = `
+      <div class="kv"><div class="k">Key</div><div class="v">${esc(u.key)}</div></div>
+      <div class="kv"><div class="k">用户 ID</div><div class="v">${esc(u.user_id)}</div></div>
+      <div class="kv"><div class="k">平台</div><div class="v">${esc(u.platform)}</div></div>
+      <div class="kv"><div class="k">首次活跃</div><div class="v">${fmt(u.first_seen)}</div></div>
+      <div class="kv"><div class="k">最近活跃</div><div class="v">${fmt(u.last_active)}</div></div>
+      <div class="kv"><div class="k">消息数</div><div class="v">${u.message_count || 0}</div></div>
+      <div class="kv"><div class="k">最近消息</div><div class="v">${esc(u.last_message || '-')}</div></div>
+      <div class="kv"><div class="k">所在群</div><div class="v">${Object.entries(u.groups || {}).map(([gid,g]) => esc(g.name || gid)).join('、') || '-'}</div></div>
+      <div class="section-title">自定义字段</div>
+      <div id="fieldsBox">${fieldsHtml}</div>
+      <div style="margin-top:10px;"><button onclick="addFieldRow()">＋ 添加字段</button>
+      <button class="primary" style="margin-left:8px;" onclick="saveFields()">保存字段</button></div>
+      <div class="section-title">备注</div>
+      ${notesHtml}
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        <input id="noteText" placeholder="添加备注…" style="flex:1;">
+        <button class="primary" onclick="addNote()">添加</button>
+      </div>
+      <div style="margin-top:28px;display:flex;gap:8px;">
+        <button class="danger" style="flex:1;" onclick="delUser('${esc(key)}')">删除该用户</button>
+      </div>
+    `;
+    openDrawer();
+  } catch (e) {
+    toast('加载失败：' + e.message, 'err');
+  }
+}
+
+function addFieldRow() {
+  const box = $('#fieldsBox');
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.innerHTML = '<input class="fk" placeholder="字段名"><input class="fv" placeholder="值"><button onclick="removeFieldRow(this)">✕</button>';
+  box.appendChild(row);
+}
+function removeFieldRow(btn) { btn.closest('.field-row').remove(); }
+
+async function saveFields() {
+  const fields = {};
+  document.querySelectorAll('#fieldsBox .field-row').forEach(row => {
+    const k = row.querySelector('.fk').value.trim(), v = row.querySelector('.fv').value.trim();
+    if (k) fields[k] = v;
+  });
+  try {
+    await fetch('/api/user/' + encodeURIComponent(currentKey), { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({fields}) });
+    toast('字段已保存', 'ok');
+    load();
+  } catch (e) { toast('保存失败', 'err'); }
+}
+
+async function addNote() {
+  const text = $('#noteText').value.trim();
+  if (!text) return;
+  try {
+    await fetch('/api/user/' + encodeURIComponent(currentKey) + '/note', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({text}) });
+    $('#noteText').value = '';
+    toast('备注已添加', 'ok');
+    openDetail(currentKey);
+  } catch (e) { toast('失败', 'err'); }
+}
+
+async function delNote(key, idx) {
+  if (!confirm('删除这条备注？')) return;
+  await fetch(`/api/user/${encodeURIComponent(key)}/note/${idx}`, { method: 'DELETE' });
+  openDetail(key);
+}
+
+async function delUser(key) {
+  if (!confirm('确认删除该用户的画像数据？此操作不可恢复。')) return;
+  await fetch('/api/user/' + encodeURIComponent(key), { method: 'DELETE' });
+  toast('已删除', 'ok');
+  closeDrawer();
+  load();
+}
+
+function openCreate() {
+  currentKey = null;
+  $('#dTitle').textContent = '手动添加用户';
+  $('#dBody').innerHTML = `
+    <div class="kv"><div class="k">用户 ID *</div><input id="nUid" placeholder="例如 123456"></div>
+    <div class="kv"><div class="k">昵称</div><input id="nNick" placeholder="昵称"></div>
+    <div class="kv"><div class="k">平台</div><input id="nPlat" placeholder="例如 aiocqhttp / manual" value="manual"></div>
+    <div class="kv"><div class="k">自定义字段（可留空）</div>
+      <div class="field-row"><input class="fk" placeholder="字段名" value="备注"><input class="fv" placeholder="值"></div>
+    </div>
+    <div style="margin-top:20px;"><button class="primary" style="width:100%;" onclick="createUser()">创建</button></div>
+  `;
+  openDrawer();
+}
+
+async function createUser() {
+  const user_id = $('#nUid').value.trim();
+  if (!user_id) { toast('用户 ID 必填', 'err'); return; }
+  const platform = $('#nPlat').value.trim() || 'manual';
+  const fields = {};
+  const k = document.querySelector('.fk').value.trim(), v = document.querySelector('.fv').value.trim();
+  if (k) fields[k] = v;
+  try {
+    await fetch('/api/user', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user_id, platform, nickname: $('#nNick').value.trim(), fields}) });
+    toast('已创建', 'ok');
+    closeDrawer(); load();
+  } catch (e) { toast('创建失败', 'err'); }
+}
+
+function openDrawer() { $('#drawer').classList.add('open'); $('#mask').classList.add('open'); }
+function closeDrawer() { $('#drawer').classList.remove('open'); $('#mask').classList.remove('open'); }
+
+$('#search').addEventListener('input', () => render(allUsers));
+$('#sort').addEventListener('change', () => render(allUsers));
+
+// 显示访问地址
+$('#addr').textContent = '访问地址：' + location.href.replace(/\/$/, '') + '  ·  ' + new Date().toLocaleString();
+load();
+</script>
+</body>
+</html>
