@@ -1,4 +1,4 @@
-# astrbot_plugin_soulbook · SoulBook 灵魂书卷
+# astrbot_plugin_personae · Personae 众生相
 
 自动记录每个与 bot 对话的用户信息，并提供独立端口的 WebUI 管理面板。
 
