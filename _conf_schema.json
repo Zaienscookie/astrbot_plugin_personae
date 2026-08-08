@@ -1,0 +1,26 @@
+{
+    "webui_port": {
+        "description": "WebUI 端口",
+        "type": "int",
+        "hint": "用户画像管理面板的独立访问端口，访问地址：http://服务器IP:端口/",
+        "default": 8799
+    },
+    "webui_host": {
+        "description": "WebUI 监听地址",
+        "type": "string",
+        "hint": "0.0.0.0 表示允许所有网段访问，127.0.0.1 表示仅本机",
+        "default": "0.0.0.0"
+    },
+    "enable_record": {
+        "description": "自动记录用户",
+        "type": "bool",
+        "hint": "开启后自动记录每个发言用户的昵称、所在群、消息数、活跃时间",
+        "default": true
+    },
+    "admins_id": {
+        "description": "管理员列表",
+        "type": "list",
+        "hint": "可修改他人画像的管理员，不填则仅本人可修改自己的画像",
+        "default": []
+    }
+}
