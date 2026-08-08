@@ -54,7 +54,7 @@ class UserProfileStore:
                 if isinstance(loaded, dict):
                     self._data = loaded
         except Exception as e:
-            logger.error(f"[user_profile] 读取数据文件失败: {e}")
+            logger.error(f"[personae] 读取数据文件失败: {e}")
         self._data.setdefault("meta", {})
         self._data.setdefault("users", {})
 
@@ -66,7 +66,7 @@ class UserProfileStore:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
             os.replace(tmp, self.path)
         except Exception as e:
-            logger.error(f"[user_profile] 保存数据失败: {e}")
+            logger.error(f"[personae] 保存数据失败: {e}")
 
     async def touch_user(self, key, platform, user_id, nickname,
                          group_id="", group_name="") -> dict | None:
@@ -202,12 +202,12 @@ class UserProfileStore:
 
 
 @register(
-    "astrbot_plugin_soulbook",
+    "astrbot_plugin_personae",
     "zaiens",
-    "SoulBook 灵魂书卷：用户画像管理，独立端口 WebUI 管理面板",
+    "Personae 众生相：用户画像管理，独立端口 WebUI 管理面板",
     "v1.0.0",
 )
-class UserProfilePlugin(Star):
+class PersonaePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -232,12 +232,12 @@ class UserProfilePlugin(Star):
             try:
                 await self._runner.cleanup()
             except Exception as e:
-                logger.error(f"[user_profile] WebUI 关闭失败: {e}")
+                logger.error(f"[personae] WebUI 关闭失败: {e}")
             self._runner = None
 
     async def _start_webui(self):
         if not WEBUI_FILE.exists():
-            logger.error(f"[user_profile] WebUI 页面文件不存在: {WEBUI_FILE}")
+            logger.error(f"[personae] WebUI 页面文件不存在: {WEBUI_FILE}")
             return
         app = web.Application()
         app.router.add_get("/", self._web_index)
@@ -255,9 +255,9 @@ class UserProfilePlugin(Star):
             site = web.TCPSite(runner, self.webui_host, self.webui_port)
             await site.start()
             self._runner = runner
-            logger.info(f"[user_profile] WebUI 已启动: http://<服务器IP>:{self.webui_port}/")
+            logger.info(f"[personae] WebUI 已启动: http://<服务器IP>:{self.webui_port}/")
         except Exception as e:
-            logger.error(f"[user_profile] WebUI 启动失败: {e}")
+            logger.error(f"[personae] WebUI 启动失败: {e}")
 
     # ---------- WebUI 处理 ----------
 
@@ -355,7 +355,7 @@ class UserProfilePlugin(Star):
             if text and not text.startswith(COMMAND_PREFIXES):
                 await self.store.set_last_message(key, text)
         except Exception as e:
-            logger.error(f"[user_profile] 自动记录失败: {e}")
+            logger.error(f"[personae] 自动记录失败: {e}")
         return
 
     # ---------- 指令 ----------
