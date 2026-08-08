@@ -18,9 +18,15 @@ try:
 except Exception:
     HAS_AIOHTTP = False
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from graph import GraphEngine
+
 PLUGIN_DIR = Path(__file__).resolve().parent
 DATA_DIR = PLUGIN_DIR / "data"
 DATA_FILE = DATA_DIR / "user_profiles.json"
+GRAPH_FILE = DATA_DIR / "graph.json"
 WEBUI_FILE = PLUGIN_DIR / "webui" / "index.html"
 
 COMMAND_PREFIXES = ("/", "／")
@@ -212,6 +218,7 @@ class PersonaePlugin(Star):
         super().__init__(context)
         self.config = config
         self.store = UserProfileStore(DATA_FILE)
+        self.graph = GraphEngine(GRAPH_FILE)
         self.webui_port = int(config.get("webui_port", 8799))
         self.webui_host = str(config.get("webui_host", "0.0.0.0"))
         self.enable_record = bool(config.get("enable_record", True))
@@ -224,8 +231,14 @@ class PersonaePlugin(Star):
 
     @filter.on_astrbot_loaded()
     async def _on_loaded(self, event=None):
+        try:
+            data = await self.graph.to_json()
+            if not data["stats"]["nodes"]:
+                await self.rebuild_graph()
+        except Exception as e:
+            logger.error(f"[personae] 初始构建图谱失败: {e}")
         if HAS_AIOHTTP:
-            asyncio.get_event_loop().create_task(self._start_webui())
+            await self._start_webui()
 
     async def terminate(self):
         if self._runner:
@@ -249,6 +262,12 @@ class PersonaePlugin(Star):
         app.router.add_delete("/api/user/{key}", self._web_delete)
         app.router.add_post("/api/user/{key}/note", self._web_add_note)
         app.router.add_delete("/api/user/{key}/note/{idx}", self._web_delete_note)
+        # 知识图谱 + RAG
+        app.router.add_get("/api/graph", self._web_graph)
+        app.router.add_post("/api/graph/rebuild", self._web_graph_rebuild)
+        app.router.add_get("/api/graph/nodes", self._web_graph_nodes)
+        app.router.add_delete("/api/graph/node/{nid}", self._web_graph_node_delete)
+        app.router.add_post("/api/rag/search", self._web_rag_search)
         runner = web.AppRunner(app, access_log=None)
         try:
             await runner.setup()
@@ -292,7 +311,9 @@ class PersonaePlugin(Star):
         fields = body.get("fields")
         if isinstance(fields, dict):
             await self.store.update_fields(u["key"], fields)
-        return web.json_response(await self.store.get_user(u["key"]))
+        u2 = await self.store.get_user(u["key"])
+        await self.rebuild_graph()
+        return web.json_response(u2)
 
     async def _web_create(self, request):
         try:
@@ -309,10 +330,13 @@ class PersonaePlugin(Star):
             nickname=str(body.get("nickname") or ""),
             fields=body.get("fields") if isinstance(body.get("fields"), dict) else None,
         )
+        await self.rebuild_graph()
         return web.json_response(u)
 
     async def _web_delete(self, request):
         ok = await self.store.delete_user(request.match_info["key"])
+        if ok:
+            await self.rebuild_graph()
         return web.json_response({"deleted": ok})
 
     async def _web_add_note(self, request):
@@ -326,11 +350,85 @@ class PersonaePlugin(Star):
         u = await self.store.add_note(request.match_info["key"], text, author=body.get("author") or "")
         if u is None:
             return web.json_response({"error": "not found"}, status=404)
+        await self.rebuild_graph()
         return web.json_response(u)
 
     async def _web_delete_note(self, request):
         ok = await self.store.delete_note(request.match_info["key"], int(request.match_info["idx"]))
+        if ok:
+            await self.rebuild_graph()
         return web.json_response({"deleted": ok})
+
+    # ---------- 图谱构建 ----------
+
+    async def rebuild_graph(self):
+        """从用户画像重建知识图谱：user / group / field / value / note 节点 + 关系边。"""
+        await self.graph.clear()
+        users = await self.store.list_users()
+        for u in users:
+            key = u.get("key")
+            nick = u.get("nickname") or u.get("user_id") or key
+            unode = await self.graph.add_node(
+                "user", str(nick),
+                {"key": key, "platform": u.get("platform"), "user_id": u.get("user_id"),
+                 "message_count": u.get("message_count", 0), "last_active": u.get("last_active", 0)},
+                weight=1 + min(9, u.get("message_count", 0) // 10),
+            )
+            # 群
+            for gid, g in (u.get("groups") or {}).items():
+                gnode = await self.graph.add_node("group", str(g.get("name") or gid), {"id": gid})
+                await self.graph.add_edge(unode["id"], gnode["id"], "在群")
+            # 画像字段
+            for fname, fval in (u.get("fields") or {}).items():
+                fnode = await self.graph.add_node("field", str(fname), {})
+                vnode = await self.graph.add_node("value", str(fval)[:120], {"field": fname})
+                await self.graph.add_edge(unode["id"], vnode["id"], "有")
+                await self.graph.add_edge(vnode["id"], fnode["id"], "属于字段")
+            # 备注
+            for note in (u.get("notes") or []):
+                text = str(note.get("text") or "").strip()
+                if not text:
+                    continue
+                nnode = await self.graph.add_node(
+                    "note", text[:30] + ("…" if len(text) > 30 else ""), {"text": text[:300]})
+                await self.graph.add_edge(unode["id"], nnode["id"], "有备注")
+        await self.graph.save()
+        return await self.graph.to_json()
+
+    # ---------- WebUI: 知识图谱 / RAG ----------
+
+    async def _web_graph(self, request):
+        return web.json_response(await self.graph.to_json())
+
+    async def _web_graph_rebuild(self, request):
+        data = await self.rebuild_graph()
+        return web.json_response({"rebuilt": True, **data})
+
+    async def _web_graph_nodes(self, request):
+        ntype = request.query.get("type", "").strip()
+        data = await self.graph.to_json()
+        nodes = data["nodes"]
+        if ntype:
+            nodes = [n for n in nodes if n.get("type") == ntype]
+        return web.json_response(nodes)
+
+    async def _web_graph_node_delete(self, request):
+        ok = await self.graph.remove_node(request.match_info["nid"])
+        if ok:
+            await self.graph.save()
+        return web.json_response({"deleted": ok})
+
+    async def _web_rag_search(self, request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        query = str(body.get("query", "")).strip()
+        if not query:
+            return web.json_response({"error": "query required"}, status=400)
+        depth = int(body.get("depth", 1) or 1)
+        result = await self.graph.search(query, depth=depth)
+        return web.json_response(result)
 
     # ---------- 消息记录 ----------
 
