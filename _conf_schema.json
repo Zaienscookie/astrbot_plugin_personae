@@ -1,26 +1,80 @@
 {
-    "webui_port": {
-        "description": "WebUI 端口",
-        "type": "int",
-        "hint": "用户画像管理面板的独立访问端口，访问地址：http://服务器IP:端口/",
-        "default": 8799
-    },
-    "webui_host": {
-        "description": "WebUI 监听地址",
-        "type": "string",
-        "hint": "0.0.0.0 表示允许所有网段访问，127.0.0.1 表示仅本机",
-        "default": "0.0.0.0"
-    },
-    "enable_record": {
-        "description": "自动记录用户",
-        "type": "bool",
-        "hint": "开启后自动记录每个发言用户的昵称、所在群、消息数、活跃时间",
-        "default": true
-    },
-    "admins_id": {
-        "description": "管理员列表",
-        "type": "list",
-        "hint": "可修改他人画像的管理员，不填则仅本人可修改自己的画像",
-        "default": []
-    }
+ "webui_port": {
+  "description": "WebUI 端口",
+  "type": "int",
+  "hint": "用户画像管理面板的独立访问端口，访问地址：http://服务器IP:端口/",
+  "default": 8799
+ },
+ "webui_host": {
+  "description": "WebUI 监听地址",
+  "type": "string",
+  "hint": "0.0.0.0 表示允许所有网段访问，127.0.0.1 表示仅本机",
+  "default": "0.0.0.0"
+ },
+ "enable_record": {
+  "description": "自动记录用户",
+  "type": "bool",
+  "hint": "开启后自动记录每个发言用户的昵称、所在群、消息数、活跃时间",
+  "default": true
+ },
+ "admins_id": {
+  "description": "管理员列表",
+  "type": "list",
+  "hint": "可修改他人画像的管理员，不填则仅本人可修改自己的画像",
+  "default": []
+ },
+ "ai_enabled": {
+  "description": "启用 AI 自动分析",
+  "type": "bool",
+  "hint": "开启后用 AI 定时分析对话，生成性格画像/提炼记忆；失败自动熔断",
+  "default": false
+ },
+ "ai_base_url": {
+  "description": "AI 接口地址",
+  "type": "string",
+  "hint": "OpenAI 兼容 API 的 base_url，如 https://api.deepseek.com/v1",
+  "default": ""
+ },
+ "ai_api_key": {
+  "description": "AI API Key",
+  "type": "string",
+  "hint": "对应服务的密钥",
+  "default": ""
+ },
+ "ai_model": {
+  "description": "AI 模型名",
+  "type": "string",
+  "hint": "如 deepseek-chat",
+  "default": ""
+ },
+ "ai_timeout": {
+  "description": "AI 请求超时(秒)",
+  "type": "int",
+  "hint": "单次请求超时",
+  "default": 60
+ },
+ "ai_cooldown": {
+  "description": "熔断冷却(秒)",
+  "type": "int",
+  "hint": "连续失败后暂停调用时长，默认30分钟",
+  "default": 1800
+ },
+ "ai_max_fails": {
+  "description": "熔断失败次数",
+  "type": "int",
+  "hint": "连续失败多少次后进入冷却",
+  "default": 3
+ },
+ "ai_min_messages": {
+  "description": "最少消息数",
+  "type": "int",
+  "hint": "攒够多少条消息才触发一次 AI 分析",
+  "default": 5
+ },
+ "ai_interval": {
+  "description": "检查间隔(秒)",
+  "type": "int",
+  "hint": "多久检查一次缓冲，默认5小时(18000秒)",
+  "default": 18000
+ }
 }

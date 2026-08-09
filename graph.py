@@ -36,6 +36,8 @@ DEFAULT_NODE_TYPES = {
     "field": {"label": "字段", "color": "#3ddc97"},
     "value": {"label": "值", "color": "#ffb454"},
     "note": {"label": "备注", "color": "#ff7a7a"},
+    "personality": {"label": "性格", "color": "#ff9f43"},
+    "entity": {"label": "实体", "color": "#ff6b81"},
 }
 
 

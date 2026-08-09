@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from graph import GraphEngine
+from ai_client import AIClient
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 DATA_DIR = PLUGIN_DIR / "data"
@@ -113,6 +114,14 @@ class UserProfileStore:
             u = self._data["users"].get(key)
             if u:
                 u["last_message"] = (text or "")[:200]
+                await self._save()
+
+    async def set_ai_profile(self, key, ai_profile: dict):
+        """保存 AI 分析出的性格画像摘要。"""
+        async with self._lock:
+            u = self._data["users"].get(key)
+            if u:
+                u["ai_profile"] = ai_profile
                 await self._save()
 
     async def get_user(self, key):
@@ -226,6 +235,22 @@ class PersonaePlugin(Star):
         global_admins = context.get_config().get("admins_id", [])
         self.admins_id.update(str(x) for x in global_admins)
         self._runner = None
+        # ---- AI 性格分析 ----
+        self.ai_enabled = bool(config.get("ai_enabled", True))
+        self.ai = AIClient(
+            base_url=str(config.get("ai_base_url", "") or ""),
+            api_key=str(config.get("ai_api_key", "") or ""),
+            model=str(config.get("ai_model", "") or ""),
+            timeout=int(config.get("ai_timeout", 60) or 60),
+            cooldown=int(config.get("ai_cooldown", 1800) or 1800),
+            max_fails=int(config.get("ai_max_fails", 3) or 3),
+        )
+        self.ai_min_messages = int(config.get("ai_min_messages", 5) or 5)
+        self.ai_interval = int(config.get("ai_interval", 18000) or 18000)
+        self._msg_buf: dict[str, list[str]] = {}   # key -> 最近消息
+        self._ai_lock = asyncio.Lock()
+        self._ai_task: asyncio.Task | None = None
+        self._ai_status: dict = {"last_run": 0, "analyzed": 0, "error": ""}
 
     # ---------- 生命周期 ----------
 
@@ -239,8 +264,19 @@ class PersonaePlugin(Star):
             logger.error(f"[personae] 初始构建图谱失败: {e}")
         if HAS_AIOHTTP:
             await self._start_webui()
+        # 启动 AI 性格分析后台任务
+        if self.ai_enabled and self.ai.configured:
+            self._ai_task = asyncio.create_task(self._ai_worker())
+            logger.info(f"[personae] AI 性格分析已启动: {self.ai.base_url} / {self.ai.model}")
 
     async def terminate(self):
+        if self._ai_task:
+            self._ai_task.cancel()
+            try:
+                await self._ai_task
+            except Exception:
+                pass
+            self._ai_task = None
         if self._runner:
             try:
                 await self._runner.cleanup()
@@ -362,7 +398,7 @@ class PersonaePlugin(Star):
     # ---------- 图谱构建 ----------
 
     async def rebuild_graph(self):
-        """从用户画像重建知识图谱：user / group / field / value / note 节点 + 关系边。"""
+        """从用户画像重建知识图谱：user / group / field / value / note / personality 节点 + 关系边。"""
         await self.graph.clear()
         users = await self.store.list_users()
         for u in users:
@@ -392,6 +428,16 @@ class PersonaePlugin(Star):
                 nnode = await self.graph.add_node(
                     "note", text[:30] + ("…" if len(text) > 30 else ""), {"text": text[:300]})
                 await self.graph.add_edge(unode["id"], nnode["id"], "有备注")
+            # AI 性格画像
+            ai_profile = u.get("ai_profile") or {}
+            summary = str(ai_profile.get("summary") or "").strip()
+            if summary:
+                pnode = await self.graph.add_node("personality", summary[:40], {"text": summary[:200]})
+                await self.graph.add_edge(unode["id"], pnode["id"], "性格")
+            fields = u.get("fields") or {}
+            if fields.get("性格"):
+                pnode = await self.graph.add_node("personality", str(fields["性格"])[:40], {"text": str(fields["性格"])[:200]})
+                await self.graph.add_edge(unode["id"], pnode["id"], "性格")
         await self.graph.save()
         return await self.graph.to_json()
 
@@ -452,9 +498,126 @@ class PersonaePlugin(Star):
             text = event.get_message_str()
             if text and not text.startswith(COMMAND_PREFIXES):
                 await self.store.set_last_message(key, text)
+                # AI 分析缓冲（仅记录非指令消息）
+                if self.ai_enabled:
+                    async with self._ai_lock:
+                        buf = self._msg_buf.setdefault(key, [])
+                        buf.append(f"{event.get_sender_name() or 'TA'}：{text[:200]}")
+                        if len(buf) > 50:
+                            del buf[: len(buf) - 50]
         except Exception as e:
             logger.error(f"[personae] 自动记录失败: {e}")
         return
+
+    # ---------- AI 性格分析 ----------
+
+    async def _ai_worker(self):
+        """后台循环：定时对活跃用户做 AI 性格分析。"""
+        while True:
+            try:
+                await asyncio.sleep(self.ai_interval)
+                if not self.ai.healthy:
+                    if self.ai.configured and self.ai.in_cooldown:
+                        logger.warning(f"[personae] AI 处于冷却期，跳过性格分析（{int(self.ai.cooldown_until - time.time())}s 后恢复）")
+                    continue
+                await self._analyze_batch()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[personae] AI 分析任务异常: {e}")
+                await asyncio.sleep(30)
+
+    async def _analyze_batch(self):
+        """对消息数达标的用户做 AI 性格分析，更新画像字段。"""
+        async with self._ai_lock:
+            buf = {k: list(v) for k, v in self._msg_buf.items() if len(v) >= self.ai_min_messages}
+            if not buf:
+                return
+        analyzed = 0
+        for key, msgs in buf.items():
+            try:
+                ok = await self._analyze_user(key, msgs)
+                if ok:
+                    analyzed += 1
+                    async with self._ai_lock:
+                        del self._msg_buf[key]
+            except Exception as e:
+                logger.error(f"[personae] 分析用户 {key} 失败: {e}")
+        if analyzed:
+            self._ai_status.update(last_run=now_ts(), analyzed=analyzed, error="")
+            try:
+                await self.rebuild_graph()
+            except Exception as e:
+                logger.error(f"[personae] 重建图谱失败: {e}")
+
+    async def _analyze_user(self, key: str, msgs: list[str]) -> bool:
+        user = await self.store.get_user(key)
+        if not user:
+            return False
+        nick = user.get("nickname") or user.get("user_id") or key
+        dialog = "\n".join(msgs[-30:])
+        system = (
+            "你是一名资深用户画像分析师。根据对话内容分析这个人的性格与特点，"
+            "输出 JSON，不要输出其他内容。字段：\n"
+            '{"性格": "2-4个词概括", "说话风格": "简短描述", '
+            '"爱好兴趣": "根据对话推断，没有就写未知", '
+            '"行为习惯": "简短描述", "性格摘要": "一句话（不超过40字）描述这个人是什么性子"}'
+        )
+        user_prompt = f"分析对象：{nick}\n最近对话：\n{dialog}"
+        data = await self.ai.chat_json(system, user_prompt, max_tokens=500)
+        if not data or not isinstance(data, dict):
+            return False
+        fields = dict(user.get("fields") or {})
+        updated = False
+        for k, v in data.items():
+            if k == "性格摘要":
+                continue
+            if v and str(v).strip() and str(v).strip() != "未知":
+                s = str(v).strip()
+                if fields.get(k) != s:
+                    fields[k] = s
+                    updated = True
+        summary = str(data.get("性格摘要", "")).strip()
+        ai_profile = {"summary": summary, "updated_at": now_ts()}
+        if user.get("ai_profile") != ai_profile:
+            updated = True
+        if updated:
+            await self.store.update_fields(key, fields)
+            await self.store.set_ai_profile(key, ai_profile)
+        return True
+
+    async def inject_profile(self, event: AstrMessageEvent, req):
+        """LLM 请求前注入当前用户画像，让 bot 真正用上画像。"""
+        try:
+            uid = event.get_sender_id()
+            if not uid or uid == event.get_self_id():
+                return
+            platform = event.get_platform_id() or "unknown"
+            key = f"{platform}:{uid}"
+            user = await self.store.get_user(key)
+            if not user:
+                return
+            lines = [
+                f"[用户画像] 当前对话用户：{user.get('nickname') or uid}（ID {uid}）"
+            ]
+            fields = user.get("fields") or {}
+            fstr = "；".join(f"{k}：{v}" for k, v in fields.items() if v)
+            if fstr:
+                lines.append(f"已知信息：{fstr}")
+            notes = user.get("notes") or []
+            nstr = "；".join(str(n.get("text", "")) for n in notes[-3:] if n.get("text"))
+            if nstr:
+                lines.append(f"备注：{nstr}")
+            ai_profile = user.get("ai_profile") or {}
+            asum = str(ai_profile.get("summary") or "").strip()
+            if asum:
+                lines.append(f"性格（AI分析）：{asum}")
+            last = (user.get("last_message") or "").strip()
+            if last:
+                lines.append(f"TA最近说：{last[:80]}")
+            req.system_prompt += "\n\n" + "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[personae] 画像注入失败: {e}")
 
     # ---------- 指令 ----------
 
