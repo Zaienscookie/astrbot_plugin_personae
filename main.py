@@ -252,6 +252,95 @@ class PersonaePlugin(Star):
         self._ai_task: asyncio.Task | None = None
         self._ai_status: dict = {"last_run": 0, "analyzed": 0, "error": ""}
 
+        # ---------- Dashboard 插件页面 API ----------
+        from astrbot.api.web import request as _web_req
+
+        async def _dash_stats():
+            return await self.store.stats()
+
+        async def _dash_users():
+            return await self.store.list_users()
+
+        async def _dash_user():
+            u = await self.store.get_user(_web_req.path_params.get('key'))
+            if u is None:
+                return {'error': 'not found'}
+            return u
+
+        async def _dash_create():
+            body = await _web_req.json() or {}
+            platform = str(body.get('platform') or 'manual')
+            user_id = str(body.get('user_id') or '').strip()
+            if not user_id:
+                return {'error': 'user_id required'}
+            key = body.get('key') or f'{platform}:{user_id}'
+            u = await self.store.create_user(
+                key, platform, user_id,
+                nickname=str(body.get('nickname') or ''),
+                fields=body.get('fields') if isinstance(body.get('fields'), dict) else None,
+            )
+            await self.rebuild_graph()
+            return u
+
+        async def _dash_update():
+            key = _web_req.path_params.get('key')
+            u = await self.store.get_user(key)
+            if u is None:
+                return {'error': 'not found'}
+            body = await _web_req.json() or {}
+            fields = body.get('fields')
+            if isinstance(fields, dict):
+                await self.store.update_fields(u['key'], fields)
+            u2 = await self.store.get_user(u['key'])
+            await self.rebuild_graph()
+            return u2
+
+        async def _dash_add_note():
+            key = _web_req.path_params.get('key')
+            body = await _web_req.json() or {}
+            text = str(body.get('text') or '').strip()
+            if not text:
+                return {'error': 'text required'}
+            u = await self.store.add_note(key, text, author=str(body.get('author') or ''))
+            if u is None:
+                return {'error': 'not found'}
+            await self.rebuild_graph()
+            return u
+
+        async def _dash_delete():
+            ok = await self.store.delete_user(_web_req.path_params.get('key'))
+            if ok:
+                await self.rebuild_graph()
+            return {'deleted': ok}
+
+        async def _dash_graph():
+            return await self.graph.to_json()
+
+        async def _dash_graph_rebuild():
+            await self.rebuild_graph()
+            return {'ok': True}
+
+        self.context.register_web_api('personae/api/stats', _dash_stats, ['GET'], '画像统计')
+        self.context.register_web_api('personae/api/users', _dash_users, ['GET'], '用户列表')
+        self.context.register_web_api('personae/api/user/<key>', _dash_user, ['GET'], '用户详情')
+        self.context.register_web_api('personae/api/user', _dash_create, ['POST'], '新建用户')
+        self.context.register_web_api('personae/api/user/<key>/update', _dash_update, ['POST'], '更新画像')
+        self.context.register_web_api('personae/api/user/<key>/note', _dash_add_note, ['POST'], '添加备注')
+        self.context.register_web_api('personae/api/user/<key>/delete', _dash_delete, ['POST'], '删除用户')
+        self.context.register_web_api('personae/api/graph', _dash_graph, ['GET'], '知识图谱')
+        self.context.register_web_api('personae/api/graph/rebuild', _dash_graph_rebuild, ['POST'], '重建图谱')
+
+        async def _dash_delete_note():
+            key = _web_req.path_params.get('key')
+            idx = int(_web_req.path_params.get('idx') or -1)
+            ok = await self.store.delete_note(key, idx)
+            if not ok:
+                return {'error': 'not found'}
+            await self.rebuild_graph()
+            return {'deleted': True}
+
+        self.context.register_web_api('personae/api/user/<key>/note/<idx>/delete', _dash_delete_note, ['POST'], '删除备注')
+
     # ---------- 生命周期 ----------
 
     @filter.on_astrbot_loaded()
@@ -262,8 +351,8 @@ class PersonaePlugin(Star):
                 await self.rebuild_graph()
         except Exception as e:
             logger.error(f"[personae] 初始构建图谱失败: {e}")
-        if HAS_AIOHTTP:
-            await self._start_webui()
+        if False:  # webui 已禁用
+            pass  # webui 已禁用
         # 启动 AI 性格分析后台任务
         if self.ai_enabled and self.ai.configured:
             self._ai_task = asyncio.create_task(self._ai_worker())
@@ -586,6 +675,7 @@ class PersonaePlugin(Star):
             await self.store.set_ai_profile(key, ai_profile)
         return True
 
+    @filter.on_llm_request()
     async def inject_profile(self, event: AstrMessageEvent, req):
         """LLM 请求前注入当前用户画像，让 bot 真正用上画像。"""
         try:
